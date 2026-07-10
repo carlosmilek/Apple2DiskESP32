@@ -10,7 +10,7 @@
 // CREDENCIAIS WI-FI (Modo Station)
 // ============================================================
 const char* ssid = "SSID";
-const char* password = "SENHA_WIFI";
+const char* password = "Senha_WIFI";
 
 WebServer server(80);
 
@@ -72,7 +72,7 @@ static const int position2Direction[8][8] = {
 };
 
 // ============================================================
-// GCR 6‑and‑2 ENCODING  (DSK/PO → NIB)
+// GCR 6-and-2 ENCODING  (DSK/PO -> NIB) - REESCRITO (Bugfix ProDOS)
 // ============================================================
 char   uploadPathStr[64] = "";
 size_t uploadSize        = 0;
@@ -88,10 +88,9 @@ static const uint8_t gcr62_table[64] = {
   0xf7, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
 };
 
-// Restaurado: Matrizes lógicas originais do slotek (são a forma correta)
-static const int phys_nib[16]    = { 0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15 };
-static const int dsk2log_po[16]  = { 0,2,4,6,8,10,12,14,1,3,5,7,9,11,13,15 };
-static const int dsk2log_dos[16] = { 0,7,14,6,13,5,12,4,11,3,10,2,9,1,8,15 };
+// Matriz universal de interleaving fisico (Standard Apple II Skew)
+// Incrivelmente, esta matriz tambem mapeia Setor Logico -> Chunk do ProDOS (.po)
+static const int phys_nib[16] = { 0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15 };
 
 static uint8_t  primary64_buf[256];
 static uint8_t  secondary_buf[86];
@@ -129,7 +128,6 @@ static bool convert_dsk_to_nib(const char* in_path, const char* nib_path) {
   File dsk = LittleFS.open(in_path, "r");
   if (!dsk || dsk.size() != 143360) { if(dsk) dsk.close(); return false; }
   
-  // A detecção agora se baseia puramente na extensão, ignorando o header incerto
   bool is_po = false;
   String pathStr = String(in_path);
   pathStr.toLowerCase();
@@ -137,19 +135,24 @@ static bool convert_dsk_to_nib(const char* in_path, const char* nib_path) {
     is_po = true;
   }
   
-  const int* dsk2log = is_po ? dsk2log_po : dsk2log_dos;
-  
   const uint8_t AP[]={0xD5,0xAA,0x96}, AE[]={0xDE,0xAA,0xEB};
   const uint8_t DP[]={0xD5,0xAA,0xAD}, DE[]={0xDE,0xAA,0xEB};
   memset(diskBuffer, 0xFF, NIB_SIZE); 
   
   for (int trk = 0; trk < 35; trk++) {
     uint8_t* nib = &diskBuffer[trk * TRACK_SIZE];
-    for (int sec = 0; sec < 16; sec++) {
-      int di = dsk2log[sec];
-      int pi = phys_nib[sec];
+    
+    // O loop agora corre por Setores Logicos (0 a 15)
+    for (int L = 0; L < 16; L++) {
+      // Chunk no arquivo: 
+      // Em .dsk o arquivo esta em ordem logica pura (L)
+      // Em .po o arquivo esta em blocos (a conversao eh o proprio phys_nib)
+      int file_chunk = is_po ? phys_nib[L] : L;
       
-      dsk.seek(trk * 4096 + di * 256);
+      // Posicao Fisica na trilha para colocar os bytes GCR
+      int pi = phys_nib[L];
+      
+      dsk.seek(trk * 4096 + file_chunk * 256);
       dsk.read(cnv_sec, 256);
       nibbilize(cnv_sec, cnv_gcr);
       
@@ -157,8 +160,8 @@ static bool convert_dsk_to_nib(const char* in_path, const char* nib_path) {
       memcpy(buf + 48, AP, 3);  
       odd_enc(cnv_addr, 0xFE); memcpy(buf + 51, cnv_addr, 2); 
       odd_enc(cnv_addr, trk);  memcpy(buf + 53, cnv_addr, 2); 
-      odd_enc(cnv_addr, sec);  memcpy(buf + 55, cnv_addr, 2); 
-      odd_enc(cnv_addr, (uint8_t)(0xFE ^ trk ^ sec)); memcpy(buf + 57, cnv_addr, 2); 
+      odd_enc(cnv_addr, L);    memcpy(buf + 55, cnv_addr, 2); // Setor Logico L no Header!
+      odd_enc(cnv_addr, (uint8_t)(0xFE ^ trk ^ L)); memcpy(buf + 57, cnv_addr, 2); 
       memcpy(buf + 59, AE, 3);  
       memset(buf + 62, 0xFF, 5); 
       memcpy(buf + 67, DP, 3);  
@@ -167,9 +170,9 @@ static bool convert_dsk_to_nib(const char* in_path, const char* nib_path) {
     }
   }
   dsk.close();
-  File nib = LittleFS.open(nib_path, "w");
-  if (!nib) return false;
-  nib.write(diskBuffer, NIB_SIZE); nib.close();
+  File nibFile = LittleFS.open(nib_path, "w");
+  if (!nibFile) return false;
+  nibFile.write(diskBuffer, NIB_SIZE); nibFile.close();
   return true;
 }
 
@@ -199,11 +202,10 @@ void codigoCore1(void * pvParameters) {
   for (;;) {
     uint32_t gi = REG_READ(GPIO_IN_REG);
 
-    if ((gi & (1 << PIN_ENABLE)) == 0) { // MOTOR LIGADO
+    if ((gi & (1 << PIN_ENABLE)) == 0) { 
 
       pinMode(PIN_RDATA, OUTPUT);            
 
-      // ---- READ MODE (/WREQ = 1) ----
       if ((gi & (1 << PIN_WREQ)) != 0) {
 
         REG_WRITE(GPIO_OUT_W1TC_REG, 1 << PIN_RDATA); 
@@ -228,7 +230,6 @@ void codigoCore1(void * pvParameters) {
             bitPos = 0;
             bytesSent++;
             
-            // RESPIRADOURO DO SISTEMA ORIGINAL E SEGURO
             if (rByte == 0xFF) {
               portENABLE_INTERRUPTS(); 
               __asm__ __volatile__("nop; nop; nop; nop;");
@@ -236,7 +237,6 @@ void codigoCore1(void * pvParameters) {
               next = ESP.getCycleCount();
             }
 
-            // POLLING DO MOTOR
             uint32_t current_gpio = REG_READ(GPIO_IN_REG);
             int f0 = (current_gpio >> PIN_PHASE3) & 1;
             int f1 = (current_gpio >> PIN_PHASE2) & 1;
@@ -255,13 +255,11 @@ void codigoCore1(void * pvParameters) {
                 if (move != 0) {
                   ph_track += move; 
                   
-                  // Matemática original do motor (35 trilhas * 4 = 140 passos)
                   if (ph_track < 0) ph_track = 0;
                   if (ph_track > 139) ph_track = 139;
                   phase_lastPos = newPos;
                   stepCnt++;
                   
-                  // Retornado a divisão correta
                   int newTrk = ph_track >> 2;
                   if (newTrk != intTrk) {
                     intTrk = newTrk;
@@ -292,12 +290,10 @@ void codigoCore1(void * pvParameters) {
         REG_WRITE(GPIO_OUT_W1TC_REG, 1 << PIN_RDATA); 
 
       } else {
-        // ---- WRITE MODE (/WREQ = 0) ----
         REG_WRITE(GPIO_OUT_W1TC_REG, 1 << PIN_RDATA);   
         vTaskDelay(1); 
       }
 
-      // ---- LOAD TRACK ----
       if (motorMoveu) {
         motorMoveu = false;
         if (intTrk != prevTrk && intTrk >= 0 && intTrk < MAX_TRACKS) {
@@ -309,19 +305,17 @@ void codigoCore1(void * pvParameters) {
       }
 
     } else {
-      // ---- DRIVE NOT SELECTED ----
       pinMode(PIN_RDATA, OUTPUT);                
       digitalWrite(PIN_RDATA, LOW);                  
       phase_ready = false;                           
       
-      // ROTINA DE TROCA DE DISCO
       if (flagTrocaDisco) {
         flagTrocaDisco = false;
         File f = LittleFS.open(novoDiscoPath, "r");
         if (f) {
           f.read(diskBuffer, NIB_SIZE);
           f.close();
-          intTrk = ph_track >> 2; // Restaurada a divisao
+          intTrk = ph_track >> 2;
           memcpy(trackBuffer, &diskBuffer[intTrk * TRACK_SIZE], TRACK_SIZE);
           prevTrk = intTrk;
           bytePtr = 0; bitPos = 0;
@@ -511,7 +505,23 @@ void tarefaWeb(void * pvParameters) {
 
   server.on("/upload", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
-    server.send(200, "text/html", "<body style='background:#050505; color:#33ff33; font-family:monospace;'><br><br><center><h2>UPLOAD COMPLETE!</h2><a href='/' style='color:#fff;'>RETURN</a></center></body>");
+    
+    // UI Atualizada do Fósforo Verde para a página de retorno de Upload
+    String upHtml = R"rawliteral(
+    <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+      @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+      body { background-color: #050505; color: #33ff33; font-family: 'VT323', monospace; font-size: 26px; text-shadow: 0 0 5px #33ff33; margin: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; }
+      .scanlines { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2)); background-size: 100% 4px; pointer-events: none; z-index: 9999; }
+      a { color: #050505; background-color: #33ff33; text-decoration: none; border: 2px solid #33ff33; padding: 10px 20px; margin-top: 20px; text-transform: uppercase; box-shadow: 0 0 10px #33ff33; }
+      a:hover { background-color: #050505; color: #33ff33; }
+    </style></head><body>
+    <div class="scanlines"></div>
+    <h2>UPLOAD COMPLETE</h2>
+    <a href="/">RETURN TO SYSTEM</a>
+    </body></html>
+    )rawliteral";
+    
+    server.send(200, "text/html", upHtml);
     
     String upPath = String(uploadPathStr);
     upPath.toLowerCase();
@@ -525,7 +535,7 @@ void tarefaWeb(void * pvParameters) {
         Serial.printf("[SISTEMA] Iniciando conversao de %s para %s...\n", uploadPathStr, nibPath);
         if (convert_dsk_to_nib(uploadPathStr, nibPath)) {
           LittleFS.remove(uploadPathStr); 
-          Serial.println("[SISTEMA] Conversao DSK/PO -> NIB concluida com sucesso.");
+          Serial.println("[SISTEMA] Conversao concluida com sucesso.");
         } else {
           Serial.println("[SISTEMA] Falha na conversao.");
         }
