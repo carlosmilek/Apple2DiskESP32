@@ -4,7 +4,7 @@
 ![ESP32-S3](https://img.shields.io/badge/ESP32--S3-Supported-blue?style=flat-square&logo=espressif)
 ![Status](https://img.shields.io/badge/Status-v0.1-green?style=flat-square)
 
-A highly optimized, dual-core Wi-Fi floppy drive emulator for the Apple II series, built around the ESP32-S3 microcontroller. This project allows you to load, mount, and manage your vintage Apple II disk images wirelessly through a retro green-phosphor themed web interface.
+A highly optimized, dual-core Wi-Fi floppy drive emulator for the Apple II series, built around the ESP32-S3 microcontroller. This project allows you to load, mount, and manage your vintage Apple II disk images wirelessly through a retro green-phosphor themed web interface. Use ESP32-S3-DevKitC-1 16mb Flash 8mb Psram.
 
 ## 🚀 Features
 
