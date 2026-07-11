@@ -10,7 +10,7 @@
 // CREDENCIAIS WI-FI (Modo Station)
 // ============================================================
 const char* ssid = "SSID";
-const char* password = "Senha_WIFI";
+const char* password = "Senha_wifi";
 
 WebServer server(80);
 
@@ -72,7 +72,7 @@ static const int position2Direction[8][8] = {
 };
 
 // ============================================================
-// GCR 6-and-2 ENCODING  (DSK/PO -> NIB) - REESCRITO (Bugfix ProDOS)
+// GCR 6-and-2 ENCODING (Matrizes 100% Originais Slotek)
 // ============================================================
 char   uploadPathStr[64] = "";
 size_t uploadSize        = 0;
@@ -88,9 +88,10 @@ static const uint8_t gcr62_table[64] = {
   0xf7, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff
 };
 
-// Matriz universal de interleaving fisico (Standard Apple II Skew)
-// Incrivelmente, esta matriz tambem mapeia Setor Logico -> Chunk do ProDOS (.po)
-static const int phys_nib[16] = { 0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15 };
+// Tabelas intocadas para evitar quebra de Header no Apple II
+static const int phys_nib[16]    = { 0,13,11,9,7,5,3,1,14,12,10,8,6,4,2,15 };
+static const int dsk2log_po[16]  = { 0,2,4,6,8,10,12,14,1,3,5,7,9,11,13,15 };
+static const int dsk2log_dos[16] = { 0,7,14,6,13,5,12,4,11,3,10,2,9,1,8,15 };
 
 static uint8_t  primary64_buf[256];
 static uint8_t  secondary_buf[86];
@@ -135,24 +136,18 @@ static bool convert_dsk_to_nib(const char* in_path, const char* nib_path) {
     is_po = true;
   }
   
+  const int* dsk2log = is_po ? dsk2log_po : dsk2log_dos;
+  
   const uint8_t AP[]={0xD5,0xAA,0x96}, AE[]={0xDE,0xAA,0xEB};
   const uint8_t DP[]={0xD5,0xAA,0xAD}, DE[]={0xDE,0xAA,0xEB};
   memset(diskBuffer, 0xFF, NIB_SIZE); 
   
   for (int trk = 0; trk < 35; trk++) {
     uint8_t* nib = &diskBuffer[trk * TRACK_SIZE];
-    
-    // O loop agora corre por Setores Logicos (0 a 15)
-    for (int L = 0; L < 16; L++) {
-      // Chunk no arquivo: 
-      // Em .dsk o arquivo esta em ordem logica pura (L)
-      // Em .po o arquivo esta em blocos (a conversao eh o proprio phys_nib)
-      int file_chunk = is_po ? phys_nib[L] : L;
+    for (int sec = 0; sec < 16; sec++) {
+      int di = dsk2log[sec], pi = phys_nib[sec];
       
-      // Posicao Fisica na trilha para colocar os bytes GCR
-      int pi = phys_nib[L];
-      
-      dsk.seek(trk * 4096 + file_chunk * 256);
+      dsk.seek(trk * 4096 + di * 256);
       dsk.read(cnv_sec, 256);
       nibbilize(cnv_sec, cnv_gcr);
       
@@ -160,14 +155,16 @@ static bool convert_dsk_to_nib(const char* in_path, const char* nib_path) {
       memcpy(buf + 48, AP, 3);  
       odd_enc(cnv_addr, 0xFE); memcpy(buf + 51, cnv_addr, 2); 
       odd_enc(cnv_addr, trk);  memcpy(buf + 53, cnv_addr, 2); 
-      odd_enc(cnv_addr, L);    memcpy(buf + 55, cnv_addr, 2); // Setor Logico L no Header!
-      odd_enc(cnv_addr, (uint8_t)(0xFE ^ trk ^ L)); memcpy(buf + 57, cnv_addr, 2); 
+      odd_enc(cnv_addr, sec);  memcpy(buf + 55, cnv_addr, 2); 
+      odd_enc(cnv_addr, (uint8_t)(0xFE ^ trk ^ sec)); memcpy(buf + 57, cnv_addr, 2); 
       memcpy(buf + 59, AE, 3);  
       memset(buf + 62, 0xFF, 5); 
       memcpy(buf + 67, DP, 3);  
       memcpy(buf + 70, cnv_gcr, 343); 
       memcpy(buf + 413, DE, 3);
     }
+    // Delay otimizado para não travar o WDT e manter o Upload veloz
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
   dsk.close();
   File nibFile = LittleFS.open(nib_path, "w");
@@ -230,12 +227,8 @@ void codigoCore1(void * pvParameters) {
             bitPos = 0;
             bytesSent++;
             
-            if (rByte == 0xFF) {
-              portENABLE_INTERRUPTS(); 
-              __asm__ __volatile__("nop; nop; nop; nop;");
-              portDISABLE_INTERRUPTS();
-              next = ESP.getCycleCount();
-            }
+            // Respiradouro assassino removido! 
+            // O código agora mantém cadência de ciclo impecável.
 
             uint32_t current_gpio = REG_READ(GPIO_IN_REG);
             int f0 = (current_gpio >> PIN_PHASE3) & 1;
@@ -506,7 +499,6 @@ void tarefaWeb(void * pvParameters) {
   server.on("/upload", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
     
-    // UI Atualizada do Fósforo Verde para a página de retorno de Upload
     String upHtml = R"rawliteral(
     <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
       @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
@@ -516,8 +508,8 @@ void tarefaWeb(void * pvParameters) {
       a:hover { background-color: #050505; color: #33ff33; }
     </style></head><body>
     <div class="scanlines"></div>
-    <h2>UPLOAD COMPLETE</h2>
-    <a href="/">RETURN TO SYSTEM</a>
+    <h2>UPLOAD E CONVERSAO FINALIZADOS</h2>
+    <a href="/">VOLTAR AO SISTEMA</a>
     </body></html>
     )rawliteral";
     
