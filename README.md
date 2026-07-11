@@ -88,3 +88,8 @@ Use this table to wire your prototype or design your PCB (e.g., in KiCad/EasyEDA
 
 - GCR 6-and-2 encoding/nibbilization logic adapted and heavily optimized from community implementations (special thanks to the logic structures seen in `dsk2nib` tools).
 - Thanks to the retrocomputing community for preserving the low-level physical timing documentation of the Apple II Disk II controller.
+
+# Apple2DiskESP32
+
+Some part of the code is based in https://github.com/vibr77/AppleIIDiskIIStm32F411
+Coded with AI support!
